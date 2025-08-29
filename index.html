@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chess App</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/styles/cm-chessboard.css"/>
 </head>
 <body>
     <h1>Chess App</h1>
     <div id="game-info">Current Turn: <span id="current-player">White</span></div>
-    <div id="chessboard"></div>
-    <script src="script.js"></script>
+    <div id="chessboard" style="width: 400px; max-width: 80vh"></div>
+    <script type="module" src="script.js"></script>
 </body>
 </html>

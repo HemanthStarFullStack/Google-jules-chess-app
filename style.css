@@ -5,36 +5,17 @@ body {
     align-items: center;
     height: 100vh;
     margin: 0;
-    background-color: #f0f0f0;
+    background-color: #262626;
+    color: #fff;
     flex-direction: column;
 }
 
-#chessboard {
-    display: grid;
-    grid-template-columns: repeat(8, 50px);
-    grid-template-rows: repeat(8, 50px);
-    width: 400px;
-    height: 400px;
-    border: 2px solid #333;
+h1 {
+    margin-bottom: 10px;
 }
 
-.square {
-    width: 50px;
-    height: 50px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-size: 36px;
-}
-
-.white {
-    background-color: #f0d9b5;
-}
-
-.black {
-    background-color: #b58863;
-}
-
-.selected {
-    background-color: #a2d2ff;
+#game-info {
+    margin-bottom: 20px;
+    font-size: 1.2em;
+    height: 1.5em; /* To prevent layout shift when text changes */
 }
