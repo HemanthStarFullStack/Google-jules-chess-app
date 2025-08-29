@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateTurnDisplay() {
-        playerTurnDisplay.textContent = `Turn: ${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)}`;
+        playerTurnDisplay.textContent = `${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)}`;
     }
 
     function getPieceColor(piece) {
@@ -296,7 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         } else if (isInCheck(currentPlayer)) {
                             playerTurnDisplay.textContent = `${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)} is in check!`;
                         } else {
-                             updateTurnDisplay(); // Reset the turn display if not in check
+                             updateTurnDisplay();
                         }
                     }, 250);
 
@@ -307,5 +307,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     board.enableMoveInput(inputHandler);
-    updateTurnDisplay(); // Initial display
+    updateTurnDisplay();
 });
