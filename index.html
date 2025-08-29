@@ -5,11 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chess App</title>
     <link rel="stylesheet" href="style.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
 </head>
 <body>
     <h1>Chess App</h1>
     <div id="game-info">Turn: <span id="current-player">White</span></div>
-    <div id="chessboard" style="width: 90vmin; height: 90vmin; max-width: 800px;"></div>
-    <script type="module" src="script.js"></script>
+    <div id="board" style="width: 90vmin; height: 90vmin; max-width: 800px;"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>
