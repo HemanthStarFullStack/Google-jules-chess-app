@@ -1,5 +1,4 @@
-// --- Game State ---
-let board = null;
+// --- Game State (non-DOM) ---
 const boardState = [
     ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'],
     ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'],
@@ -17,13 +16,16 @@ let castlingRights = {
     black: { kingSide: true, queenSide: true }
 };
 let sourceSquare = '';
-let playerTurnDisplay = null;
 
-// --- AI and Game Mode State ---
+// --- AI and Game Mode State (non-DOM) ---
 let stockfish = null;
 let isAiGame = false;
 let playerColor = null;
 let isAiThinking = false;
+
+// --- DOM elements (will be initialized when DOM is ready) ---
+let board = null;
+let playerTurnDisplay = null;
 
 // --- Helper Functions ---
 function squareToRowCol(s) { return { row: 8 - parseInt(s[1]), col: s.charCodeAt(0) - 97 } }
@@ -49,7 +51,7 @@ function boardStateToFen() {
     if (castlingRights.white.kingSide) castle += 'K';
     if (castlingRights.white.queenSide) castle += 'Q';
     if (castlingRights.black.kingSide) castle += 'k';
-    if (castlingRights.black.queenSide) castle += 'q';
+    if (castlingRights.black.queenSide) castleFen += 'q';
     fen += ` ${castle || '-'}`;
     if (enPassantTargetSquare) {
         fen += ` ${rowColToSquare(enPassantTargetSquare.row, enPassantTargetSquare.col)}`;
@@ -106,20 +108,16 @@ function makeMove(from, to) {
     enPassantTargetSquare = (piece.toLowerCase() === 'p' && Math.abs(from.row - to.row) === 2) ? { row: (from.row + to.row) / 2, col: from.col } : null;
     if (piece === 'K') castlingRights.white = { kingSide: false, queenSide: false };
     if (piece === 'k') castlingRights.black = { kingSide: false, queenSide: false };
-    if (piece === 'R') {
-        if (from.row === 7 && from.col === 0) castlingRights.white.queenSide = false;
-        if (from.row === 7 && from.col === 7) castlingRights.white.kingSide = false;
-    }
-    if (piece === 'r') {
-        if (from.row === 0 && from.col === 0) castlingRights.black.queenSide = false;
-        if (from.row === 0 && from.col === 7) castlingRights.black.kingSide = false;
-    }
+    if (piece === 'R' && from.row === 7 && from.col === 0) castlingRights.white.queenSide = false;
+    if (piece === 'R' && from.row === 7 && from.col === 7) castlingRights.white.kingSide = false;
+    if (piece === 'r' && from.row === 0 && from.col === 0) castlingRights.black.queenSide = false;
+    if (piece === 'r' && from.row === 0 && from.col === 7) castlingRights.black.kingSide = false;
     if (piece.toLowerCase() === 'p' && (to.row === 0 || to.row === 7)) {
         boardState[to.row][to.col] = getPieceColor(piece) === 'white' ? 'Q' : 'q';
     }
     currentPlayer = currentPlayer === 'white' ? 'black' : 'white';
-    updateStatus();
     board.position(boardStateToFen());
+    updateStatus();
     if (isAiGame && currentPlayer !== playerColor) {
         setTimeout(getAiMove, 250);
     }
@@ -194,6 +192,7 @@ function generateAllLegalMoves(c) {
 }
 
 // --- UI & AI Integration ---
+function removeHighlights() { $('#board .square-55d63').removeClass('highlight-legal') }
 function onSquareClick(sq) {
     if (gameOver || isAiThinking || (isAiGame && currentPlayer !== playerColor)) return;
     const c = squareToRowCol(sq), p = boardState[c.row][c.col];
@@ -201,13 +200,14 @@ function onSquareClick(sq) {
         sourceSquare = sq;
         getLegalMovesForPiece(c.row, c.col).forEach(s => $(`#board .square-${s}`).addClass('highlight-legal'));
     } else if (sourceSquare) {
-        if (sourceSquare === sq) { sourceSquare = ''; removeHighlights(); return; }
-        const from = squareToRowCol(sourceSquare), to = squareToRowCol(sq);
-        if (isMoveLegal(boardState[from.row][from.col], from.row, from.col, to.row, to.col)) {
-            makeMove(from, to);
+        removeHighlights();
+        if (sourceSquare !== sq) {
+            const from = squareToRowCol(sourceSquare), to = squareToRowCol(sq);
+            if (isMoveLegal(boardState[from.row][from.col], from.row, from.col, to.row, to.col)) {
+                makeMove(from, to);
+            }
         }
         sourceSquare = '';
-        removeHighlights();
     }
 }
 function onDragStart(s, p) {
@@ -215,15 +215,14 @@ function onDragStart(s, p) {
     removeHighlights(); sourceSquare = '';
 }
 function onDrop(src, tgt) {
+    removeHighlights();
     const from = squareToRowCol(src), to = squareToRowCol(tgt);
     if (isMoveLegal(boardState[from.row][from.col], from.row, from.col, to.row, to.col)) {
         makeMove(from, to);
     } else return 'snapback';
 }
-function removeHighlights() { $('#board .square-55d63').removeClass('highlight-legal') }
-
 function initStockfish() {
-    stockfish = new Worker('stockfish.wasm.js');
+    stockfish = new Worker('stockfish.js');
     stockfish.addEventListener('message', function (e) {
         const bestMoveRegex = /bestmove\s([a-h][1-8])([a-h][1-8])/;
         const match = e.data.match(bestMoveRegex);
@@ -249,40 +248,29 @@ function startGame() {
         pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
     };
     board = Chessboard('board', config);
-    $('#board').on('click', '.square-55d63', function() { onSquareClick($(this).data('square')) });
-
-    if(isAiGame) {
-        initStockfish();
-        if(playerColor !== 'white') {
-            getAiMove();
-        }
-    }
+    $('#board').on('click', 'div[data-square]', function() { onSquareClick($(this).data('square')) });
+    if(isAiGame) initStockfish();
+    if(isAiGame && playerColor === 'black') getAiMove();
     updateStatus();
 }
 
 $(function() {
     playerTurnDisplay = $('#current-player');
-
     $('#pvp-button').on('click', () => {
         isAiGame = false;
         $('#game-mode-modal').addClass('hidden');
         startGame();
     });
-
     $('#pva-button').on('click', () => {
         $('#color-selection').removeClass('hidden');
     });
-
     $('#white-button').on('click', () => {
-        isAiGame = true;
-        playerColor = 'white';
+        isAiGame = true; playerColor = 'white';
         $('#game-mode-modal').addClass('hidden');
         startGame();
     });
-
     $('#black-button').on('click', () => {
-        isAiGame = true;
-        playerColor = 'black';
+        isAiGame = true; playerColor = 'black';
         $('#game-mode-modal').addClass('hidden');
         startGame();
     });
