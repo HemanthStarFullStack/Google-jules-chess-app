@@ -1,8 +1,8 @@
 // --- Game State ---
+let board = null;
 const boardState = [
     ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'],
     ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'],
-    ['', '', '', '', '', '', '', ''],
     ['', '', '', '', '', '', '', ''],
     ['', '', '', '', '', '', '', ''],
     ['', '', '', '', '', '', '', ''],
@@ -16,261 +16,274 @@ let castlingRights = {
     white: { kingSide: true, queenSide: true },
     black: { kingSide: true, queenSide: true }
 };
-let board = null; // Will be initialized by chessboard.js
-const playerTurnDisplay = $('#current-player');
+let sourceSquare = '';
+let playerTurnDisplay = null;
+
+// --- AI and Game Mode State ---
+let stockfish = null;
+let isAiGame = false;
+let playerColor = null;
+let isAiThinking = false;
 
 // --- Helper Functions ---
+function squareToRowCol(s) { return { row: 8 - parseInt(s[1]), col: s.charCodeAt(0) - 97 } }
+function rowColToSquare(r, c) { return `${String.fromCharCode(97 + c)}${8 - r}` }
+function getPieceColor(p) { return p === p.toUpperCase() ? 'white' : 'black' }
+
 function boardStateToFen() {
     let fen = '';
     for (let i = 0; i < 8; i++) {
-        let emptyCount = 0;
+        let empty = 0;
         for (let j = 0; j < 8; j++) {
             const piece = boardState[i][j];
             if (piece) {
-                if (emptyCount > 0) {
-                    fen += emptyCount;
-                    emptyCount = 0;
-                }
+                if (empty > 0) { fen += empty; empty = 0; }
                 fen += piece;
-            } else {
-                emptyCount++;
-            }
+            } else { empty++; }
         }
-        if (emptyCount > 0) {
-            fen += emptyCount;
-        }
-        if (i < 7) {
-            fen += '/';
-        }
+        if (empty > 0) fen += empty;
+        if (i < 7) fen += '/';
     }
     fen += ` ${currentPlayer === 'white' ? 'w' : 'b'}`;
-    let castleFen = '';
-    if (castlingRights.white.kingSide) castleFen += 'K';
-    if (castlingRights.white.queenSide) castleFen += 'Q';
-    if (castlingRights.black.kingSide) castleFen += 'k';
-    if (castlingRights.black.queenSide) castleFen += 'q';
-    fen += ` ${castleFen || '-'}`;
+    let castle = '';
+    if (castlingRights.white.kingSide) castle += 'K';
+    if (castlingRights.white.queenSide) castle += 'Q';
+    if (castlingRights.black.kingSide) castle += 'k';
+    if (castlingRights.black.queenSide) castle += 'q';
+    fen += ` ${castle || '-'}`;
     if (enPassantTargetSquare) {
         fen += ` ${rowColToSquare(enPassantTargetSquare.row, enPassantTargetSquare.col)}`;
-    } else {
-        fen += ' -';
-    }
+    } else { fen += ' -'; }
     fen += ' 0 1';
     return fen;
 }
 
-function squareToRowCol(square) {
-    const col = square.charCodeAt(0) - 'a'.charCodeAt(0);
-    const row = 8 - parseInt(square.charAt(1), 10);
-    return { row, col };
-}
-
-function rowColToSquare(row, col) {
-    const file = String.fromCharCode('a'.charCodeAt(0) + col);
-    const rank = 8 - row;
-    return `${file}${rank}`;
-}
-
-function updateTurnDisplay() {
-    const statusText = `Turn: ${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)}`;
-    playerTurnDisplay.text(statusText);
-}
-
-function getPieceColor(piece) {
-    if (!piece) return null;
-    return piece === piece.toUpperCase() ? 'white' : 'black';
-}
-
-// --- Game Logic (Engine) ---
-function isMoveLegal(piece, fromRow, fromCol, toRow, toCol) {
-    if (!isValidMove(piece, fromRow, fromCol, toRow, toCol)) {
-        return false;
+function updateStatus() {
+    if (gameOver) return;
+    let status = `Turn: ${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)}`;
+    if (isAiGame && currentPlayer !== playerColor) {
+        status = "Stockfish is thinking...";
     }
-    const originalPiece = boardState[toRow][toCol];
-    boardState[toRow][toCol] = piece;
-    boardState[fromRow][fromCol] = '';
-    const inCheck = isInCheck(getPieceColor(piece));
-    boardState[fromRow][fromCol] = piece;
-    boardState[toRow][toCol] = originalPiece;
-    return !inCheck;
-}
-
-function isValidMove(piece, fromRow, fromCol, toRow, toCol) {
-    const pieceType = piece.toLowerCase();
-    const pieceColor = getPieceColor(piece);
-    const destinationPiece = boardState[toRow][toCol];
-    if (destinationPiece && getPieceColor(destinationPiece) === pieceColor) {
-        return false;
-    }
-    switch (pieceType) {
-        case 'p':
-            const direction = pieceColor === 'white' ? -1 : 1;
-            if (fromCol === toCol && destinationPiece === '' && toRow === fromRow + direction) return true;
-            if (fromCol === toCol && destinationPiece === '' && (pieceColor === 'white' ? 6 : 1) === fromRow && toRow === fromRow + 2 * direction && isPathClear(fromRow, fromCol, toRow, toCol)) return true;
-            if (Math.abs(fromCol - toCol) === 1 && toRow === fromRow + direction && destinationPiece) return true;
-            if (enPassantTargetSquare && toRow === enPassantTargetSquare.row && toCol === enPassantTargetSquare.col && Math.abs(fromCol - toCol) === 1 && toRow === fromRow + direction) return true;
-            return false;
-        case 'n':
-            const rowDiff = Math.abs(toRow - fromRow);
-            const colDiff = Math.abs(toCol - fromCol);
-            return (rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2);
-        case 'b': return Math.abs(toRow - fromRow) === Math.abs(toCol - fromCol) && isPathClear(fromRow, fromCol, toRow, toCol);
-        case 'r': return (toRow === fromRow || toCol === fromCol) && isPathClear(fromRow, fromCol, toRow, toCol);
-        case 'q': return (Math.abs(toRow - fromRow) === Math.abs(toCol - fromCol) || toRow === fromRow || toCol === fromCol) && isPathClear(fromRow, fromCol, toRow, toCol);
-        case 'k':
-            const kingRowDiff = Math.abs(toRow - fromRow);
-            const kingColDiff = Math.abs(toCol - fromCol);
-            if (kingRowDiff <= 1 && kingColDiff <= 1) return true;
-            if (kingRowDiff === 0 && kingColDiff === 2) {
-                if (isInCheck(pieceColor)) return false;
-                const castleDirection = toCol > fromCol ? 1 : -1;
-                const rookSide = castleDirection === 1 ? 'kingSide' : 'queenSide';
-                if (!castlingRights[pieceColor][rookSide]) return false;
-                const rookCol = castleDirection === 1 ? 7 : 0;
-                if (!isPathClear(fromRow, fromCol, fromRow, rookCol)) return false;
-                if (isSquareAttacked(fromRow, fromCol + castleDirection, pieceColor === 'white' ? 'black' : 'white')) return false;
-                return true;
-            }
-            return false;
-        default: return false;
-    }
-}
-function isPathClear(fromRow, fromCol, toRow, toCol) {
-    const rowStep = Math.sign(toRow - fromRow);
-    const colStep = Math.sign(toCol - fromCol);
-    let currentRow = fromRow + rowStep;
-    let currentCol = fromCol + colStep;
-    while (currentRow !== toRow || currentCol !== toCol) {
-        if (boardState[currentRow][currentCol] !== '') return false;
-        currentRow += rowStep;
-        currentCol += colStep;
-    }
-    return true;
-}
-function findKing(color) {
-    const kingPiece = color === 'white' ? 'K' : 'k';
-    for (let i = 0; i < 8; i++) {
-        for (let j = 0; j < 8; j++) {
-            if (boardState[i][j] === kingPiece) return { row: i, col: j };
-        }
-    }
-    return null;
-}
-function isInCheck(color) {
-    const kingPos = findKing(color);
-    if (!kingPos) return false;
-    return isSquareAttacked(kingPos.row, kingPos.col, color === 'white' ? 'black' : 'white');
-}
-function isSquareAttacked(row, col, attackerColor) {
-    for (let i = 0; i < 8; i++) {
-        for (let j = 0; j < 8; j++) {
-            const piece = boardState[i][j];
-            if (piece && getPieceColor(piece) === attackerColor) {
-                if (isValidMove(piece, i, j, row, col)) return true;
-            }
-        }
-    }
-    return false;
-}
-function generateAllLegalMoves(color) {
-    const legalMoves = [];
-    for (let i = 0; i < 8; i++) {
-        for (let j = 0; j < 8; j++) {
-            const piece = boardState[i][j];
-            if (piece && getPieceColor(piece) === color) {
-                for (let toRow = 0; toRow < 8; toRow++) {
-                    for (let toCol = 0; toCol < 8; toCol++) {
-                        if (isMoveLegal(piece, i, j, toRow, toCol)) {
-                            legalMoves.push({ from: [i, j], to: [toRow, toCol] });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return legalMoves;
-}
-
-// --- chessboard.js Integration ---
-function onDragStart(source, piece) {
-    if (gameOver) return false;
-    if (piece.search(new RegExp(`^${currentPlayer === 'white' ? 'w' : 'b'}`)) === -1) {
-        return false;
-    }
-}
-
-function onDrop(source, target) {
-    const fromCoords = squareToRowCol(source);
-    const toCoords = squareToRowCol(target);
-    const piece = boardState[fromCoords.row][fromCoords.col];
-
-    if (isMoveLegal(piece, fromCoords.row, fromCoords.col, toCoords.row, toCoords.col)) {
-        const isEnPassant = piece.toLowerCase() === 'p' && enPassantTargetSquare && toCoords.row === enPassantTargetSquare.row && toCoords.col === enPassantTargetSquare.col;
-        const isCastling = piece.toLowerCase() === 'k' && Math.abs(fromCoords.col - toCoords.col) === 2;
-
-        boardState[toCoords.row][toCoords.col] = piece;
-        boardState[fromCoords.row][fromCoords.col] = '';
-
-        if (isEnPassant) { boardState[fromCoords.row][toCoords.col] = ''; }
-        if (isCastling) {
-            const direction = toCoords.col > fromCoords.col ? 1 : -1;
-            const rookCol = direction === 1 ? 7 : 0;
-            const rookToCol = direction === 1 ? 5 : 3;
-            const rook = boardState[fromCoords.row][rookCol];
-            boardState[fromCoords.row][rookToCol] = rook;
-            boardState[fromCoords.row][rookCol] = '';
-        }
-
-        if (piece.toLowerCase() === 'p' && Math.abs(fromCoords.row - toCoords.row) === 2) {
-            enPassantTargetSquare = { row: (fromCoords.row + toCoords.row) / 2, col: fromCoords.col };
-        } else {
-            enPassantTargetSquare = null;
-        }
-
-        if (piece === 'K') { castlingRights.white = { kingSide: false, queenSide: false }; }
-        if (piece === 'k') { castlingRights.black = { kingSide: false, queenSide: false }; }
-        if (piece === 'R' && fromCoords.row === 7 && fromCoords.col === 0) { castlingRights.white.queenSide = false; }
-        if (piece === 'R' && fromCoords.row === 7 && fromCoords.col === 7) { castlingRights.white.kingSide = false; }
-        if (piece === 'r' && fromCoords.row === 0 && fromCoords.col === 0) { castlingRights.black.queenSide = false; }
-        if (piece === 'r' && fromCoords.row === 0 && fromCol === 7) { castlingRights.black.kingSide = false; }
-
-        if (piece.toLowerCase() === 'p') {
-            const promotionRank = getPieceColor(piece) === 'white' ? 0 : 7;
-            if (toCoords.row === promotionRank) {
-                boardState[toCoords.row][toCoords.col] = getPieceColor(piece) === 'white' ? 'Q' : 'q';
-            }
-        }
-        currentPlayer = currentPlayer === 'white' ? 'black' : 'white';
-        window.setTimeout(() => {
-            board.position(boardStateToFen());
-            checkGameOver();
-        }, 250);
-    } else {
-        return 'snapback';
-    }
-}
-
-function checkGameOver() {
-    updateTurnDisplay();
     const legalMoves = generateAllLegalMoves(currentPlayer);
     if (legalMoves.length === 0) {
         gameOver = true;
         if (isInCheck(currentPlayer)) {
-            playerTurnDisplay.text('Checkmate! ' + (currentPlayer === 'white' ? 'Black' : 'White') + ' wins.');
+            status = 'Checkmate! ' + (currentPlayer === 'white' ? 'Black' : 'White') + ' wins.';
         } else {
-            playerTurnDisplay.text('Stalemate! The game is a draw.');
+            status = 'Stalemate! The game is a draw.';
         }
     } else if (isInCheck(currentPlayer)) {
-        playerTurnDisplay.text(`Turn: ${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)} (in check)`);
+        status += ' (in check)';
     }
+    playerTurnDisplay.text(status);
 }
 
-const config = {
-    draggable: true,
-    position: 'start',
-    onDragStart: onDragStart,
-    onDrop: onDrop,
-    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
-};
-board = Chessboard('board', config);
-updateTurnDisplay();
+// --- Game Logic (Engine) ---
+function getLegalMovesForPiece(r, c) {
+    const p = boardState[r][c], moves = [];
+    if (!p) return moves;
+    for (let tr = 0; tr < 8; tr++) {
+        for (let tc = 0; tc < 8; tc++) {
+            if (isMoveLegal(p, r, c, tr, tc)) moves.push(rowColToSquare(tr, tc));
+        }
+    }
+    return moves;
+}
+
+function makeMove(from, to) {
+    const piece = boardState[from.row][from.col];
+    const isEnP = piece.toLowerCase() === 'p' && enPassantTargetSquare && to.row === enPassantTargetSquare.row && to.col === enPassantTargetSquare.col;
+    const isCastle = piece.toLowerCase() === 'k' && Math.abs(from.col - to.col) === 2;
+    boardState[to.row][to.col] = piece;
+    boardState[from.row][from.col] = '';
+    if (isEnP) boardState[from.row][to.col] = '';
+    if (isCastle) {
+        const dir = to.col > from.col ? 1 : -1, rCol = dir === 1 ? 7 : 0, rToCol = dir === 1 ? 5 : 3;
+        const rook = boardState[from.row][rCol];
+        boardState[from.row][rToCol] = rook;
+        boardState[from.row][rCol] = '';
+    }
+    enPassantTargetSquare = (piece.toLowerCase() === 'p' && Math.abs(from.row - to.row) === 2) ? { row: (from.row + to.row) / 2, col: from.col } : null;
+    if (piece === 'K') castlingRights.white = { kingSide: false, queenSide: false };
+    if (piece === 'k') castlingRights.black = { kingSide: false, queenSide: false };
+    if (piece === 'R') {
+        if (from.row === 7 && from.col === 0) castlingRights.white.queenSide = false;
+        if (from.row === 7 && from.col === 7) castlingRights.white.kingSide = false;
+    }
+    if (piece === 'r') {
+        if (from.row === 0 && from.col === 0) castlingRights.black.queenSide = false;
+        if (from.row === 0 && from.col === 7) castlingRights.black.kingSide = false;
+    }
+    if (piece.toLowerCase() === 'p' && (to.row === 0 || to.row === 7)) {
+        boardState[to.row][to.col] = getPieceColor(piece) === 'white' ? 'Q' : 'q';
+    }
+    currentPlayer = currentPlayer === 'white' ? 'black' : 'white';
+    updateStatus();
+    board.position(boardStateToFen());
+    if (isAiGame && currentPlayer !== playerColor) {
+        setTimeout(getAiMove, 250);
+    }
+}
+function isMoveLegal(p, r1, c1, r2, c2) {
+    if (!isValidMove(p, r1, c1, r2, c2)) return false;
+    const op = boardState[r2][c2];
+    boardState[r2][c2] = p; boardState[r1][c1] = '';
+    const isCheck = isInCheck(getPieceColor(p));
+    boardState[r1][c1] = p; boardState[r2][c2] = op;
+    return !isCheck;
+}
+function isValidMove(p, r1, c1, r2, c2) {
+    const pt = p.toLowerCase(), pc = getPieceColor(p), dp = boardState[r2][c2];
+    if (dp && getPieceColor(dp) === pc) return false;
+    switch (pt) {
+        case 'p':
+            const dir = pc === 'white' ? -1 : 1;
+            if (c1 === c2 && !dp && r2 === r1 + dir) return true;
+            if (c1 === c2 && !dp && (pc === 'white' ? 6 : 1) === r1 && r2 === r1 + 2 * dir && isPathClear(r1, c1, r2, c2)) return true;
+            if (Math.abs(c1 - c2) === 1 && r2 === r1 + dir && dp) return true;
+            if (enPassantTargetSquare && r2 === enPassantTargetSquare.row && c2 === enPassantTargetSquare.col && Math.abs(c1 - c2) === 1 && r2 === r1 + dir) return true;
+            return false;
+        case 'n': const rd = Math.abs(r2 - r1), cd = Math.abs(c2 - c1); return (rd === 2 && cd === 1) || (rd === 1 && cd === 2);
+        case 'b': return Math.abs(r2 - r1) === Math.abs(c2 - c1) && isPathClear(r1, c1, r2, c2);
+        case 'r': return (r2 === r1 || c2 === c1) && isPathClear(r1, c1, r2, c2);
+        case 'q': return (Math.abs(r2 - r1) === Math.abs(c2 - c1) || r2 === r1 || c2 === c1) && isPathClear(r1, c1, r2, c2);
+        case 'k':
+            const krd = Math.abs(r2 - r1), kcd = Math.abs(c2 - c1);
+            if (krd <= 1 && kcd <= 1) return true;
+            if (krd === 0 && kcd === 2) {
+                if (isInCheck(pc)) return false;
+                const cdir = c2 > c1 ? 1 : -1, rs = cdir === 1 ? 'kingSide' : 'queenSide';
+                if (!castlingRights[pc][rs]) return false;
+                const rc = cdir === 1 ? 7 : 0;
+                if (!isPathClear(r1, c1, r1, rc)) return false;
+                if (isSquareAttacked(r1, c1 + cdir, pc === 'white' ? 'black' : 'white')) return false;
+                return true;
+            }
+            return false;
+    }
+}
+function isPathClear(r1, c1, r2, c2) {
+    const rs = Math.sign(r2 - r1), cs = Math.sign(c2 - c1);
+    let r = r1 + rs, c = c1 + cs;
+    while (r !== r2 || c !== c2) {
+        if (boardState[r][c]) return false;
+        r += rs; c += cs;
+    }
+    return true;
+}
+function findKing(c) {
+    const k = c === 'white' ? 'K' : 'k';
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) if (boardState[i][j] === k) return { row: i, col: j };
+    return null;
+}
+function isInCheck(c) { const kp = findKing(c); return kp && isSquareAttacked(kp.row, kp.col, c === 'white' ? 'black' : 'white') }
+function isSquareAttacked(r, c, ac) {
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+        const p = boardState[i][j];
+        if (p && getPieceColor(p) === ac && isValidMove(p, i, j, r, c)) return true;
+    }
+    return false;
+}
+function generateAllLegalMoves(c) {
+    const m = [];
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+        const p = boardState[i][j];
+        if (p && getPieceColor(p) === c) for (let r = 0; r < 8; r++) for (let col = 0; col < 8; col++) if (isMoveLegal(p, i, j, r, col)) m.push({});
+    }
+    return m;
+}
+
+// --- UI & AI Integration ---
+function onSquareClick(sq) {
+    if (gameOver || isAiThinking || (isAiGame && currentPlayer !== playerColor)) return;
+    const c = squareToRowCol(sq), p = boardState[c.row][c.col];
+    if (!sourceSquare && p && getPieceColor(p) === currentPlayer) {
+        sourceSquare = sq;
+        getLegalMovesForPiece(c.row, c.col).forEach(s => $(`#board .square-${s}`).addClass('highlight-legal'));
+    } else if (sourceSquare) {
+        if (sourceSquare === sq) { sourceSquare = ''; removeHighlights(); return; }
+        const from = squareToRowCol(sourceSquare), to = squareToRowCol(sq);
+        if (isMoveLegal(boardState[from.row][from.col], from.row, from.col, to.row, to.col)) {
+            makeMove(from, to);
+        }
+        sourceSquare = '';
+        removeHighlights();
+    }
+}
+function onDragStart(s, p) {
+    if (gameOver || isAiThinking || p.search(new RegExp(`^${currentPlayer === 'white' ? 'w' : 'b'}`)) === -1 || (isAiGame && currentPlayer !== playerColor)) return false;
+    removeHighlights(); sourceSquare = '';
+}
+function onDrop(src, tgt) {
+    const from = squareToRowCol(src), to = squareToRowCol(tgt);
+    if (isMoveLegal(boardState[from.row][from.col], from.row, from.col, to.row, to.col)) {
+        makeMove(from, to);
+    } else return 'snapback';
+}
+function removeHighlights() { $('#board .square-55d63').removeClass('highlight-legal') }
+
+function initStockfish() {
+    stockfish = new Worker('stockfish.wasm.js');
+    stockfish.addEventListener('message', function (e) {
+        const bestMoveRegex = /bestmove\s([a-h][1-8])([a-h][1-8])/;
+        const match = e.data.match(bestMoveRegex);
+        if (match) {
+            isAiThinking = false;
+            makeMove(squareToRowCol(match[1]), squareToRowCol(match[2]));
+        }
+    });
+    stockfish.postMessage('uci');
+    stockfish.postMessage('isready');
+}
+function getAiMove() {
+    isAiThinking = true;
+    updateStatus();
+    stockfish.postMessage(`position fen ${boardStateToFen()}`);
+    stockfish.postMessage('go depth 15');
+}
+
+// --- Main Execution ---
+function startGame() {
+    const config = {
+        draggable: true, position: 'start', onDragStart: onDragStart, onDrop: onDrop,
+        pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+    };
+    board = Chessboard('board', config);
+    $('#board').on('click', '.square-55d63', function() { onSquareClick($(this).data('square')) });
+
+    if(isAiGame) {
+        initStockfish();
+        if(playerColor !== 'white') {
+            getAiMove();
+        }
+    }
+    updateStatus();
+}
+
+$(function() {
+    playerTurnDisplay = $('#current-player');
+
+    $('#pvp-button').on('click', () => {
+        isAiGame = false;
+        $('#game-mode-modal').addClass('hidden');
+        startGame();
+    });
+
+    $('#pva-button').on('click', () => {
+        $('#color-selection').removeClass('hidden');
+    });
+
+    $('#white-button').on('click', () => {
+        isAiGame = true;
+        playerColor = 'white';
+        $('#game-mode-modal').addClass('hidden');
+        startGame();
+    });
+
+    $('#black-button').on('click', () => {
+        isAiGame = true;
+        playerColor = 'black';
+        $('#game-mode-modal').addClass('hidden');
+        startGame();
+    });
+});
