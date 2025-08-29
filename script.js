@@ -214,9 +214,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const board = new Chessboard(document.getElementById('chessboard'), {
         position: FEN.start,
-        assetsUrl: "https://cdn.jsdelivr.net/npm/cm-chessboard@8/assets/",
+        assetsUrl: "./assets/",
         style: {
-            cssClass: "blue",
             pieces: {
                 file: "pieces/staunty.svg"
             }
