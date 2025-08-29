@@ -269,7 +269,8 @@ const config = {
     draggable: true,
     position: 'start',
     onDragStart: onDragStart,
-    onDrop: onDrop
+    onDrop: onDrop,
+    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
 };
 board = Chessboard('board', config);
 updateTurnDisplay();
