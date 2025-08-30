@@ -1,287 +1,213 @@
-// --- Game State (non-DOM) ---
-const boardState = [
-    ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'], ['p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'],
-    ['', '', '', '', '', '', '', ''], ['', '', '', '', '', '', '', ''],
-    ['', '', '', '', '', '', '', ''], ['', '', '', '', '', '', '', ''],
-    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'], ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R']
-];
-let currentPlayer = 'white';
-let gameOver = false;
-let enPassantTargetSquare = null;
-let castlingRights = { white: { kingSide: true, queenSide: true }, black: { kingSide: true, queenSide: true } };
-let selectedSquare = null;
-
-// --- AI and Game Mode State (non-DOM) ---
-let stockfish = null;
-let isAiGame = false;
-let playerColor = null;
-let isAiThinking = false;
-
-// --- DOM elements (will be initialized when DOM is ready) ---
-let chessboardEl = null;
-let playerTurnDisplay = null;
-
-// --- Piece Representation ---
-const pieceToIdMap = {
-    'r': 'br', 'n': 'bn', 'b': 'bb', 'q': 'bq', 'k': 'bk', 'p': 'bp',
-    'R': 'wr', 'N': 'wn', 'B': 'wb', 'Q': 'wq', 'K': 'wk', 'P': 'wp'
-};
-
-// --- Helper Functions ---
-function getPieceColor(p) { return p === p.toUpperCase() ? 'white' : 'black' }
-function rowColToSquare(r, c) { return `${String.fromCharCode(97 + c)}${8 - r}` }
-function squareToRowCol(s) { return { row: 8 - parseInt(s[1]), col: s.charCodeAt(0) - 97 } }
-
-// --- Rendering & Status Updates ---
-function updateBoard() {
-    for (let i = 0; i < 8; i++) {
-        for (let j = 0; j < 8; j++) {
-            const squareEl = chessboardEl.querySelector(`[data-row='${i}'][data-col='${j}']`);
-            const piece = boardState[i][j];
-            squareEl.innerHTML = '';
-            squareEl.classList.remove('selected', 'highlight-legal');
-            if (selectedSquare && selectedSquare.row === i && selectedSquare.col === j) {
-                squareEl.classList.add('selected');
-            }
-            if (piece) {
-                const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-                const useEl = document.createElementNS("http://www.w3.org/2000/svg", "use");
-                useEl.setAttributeNS("http://www.w3.org/1999/xlink", "href", `assets/pieces/staunty.svg#${pieceToIdMap[piece]}`);
-                svgEl.appendChild(useEl);
-                squareEl.appendChild(svgEl);
-            }
-        }
-    }
-    updateStatus();
-}
-
-function highlightLegalMoves(moves) {
-    moves.forEach(move => {
-        const row = 8 - parseInt(move.charAt(1));
-        const col = move.charCodeAt(0) - 'a'.charCodeAt(0);
-        const squareEl = chessboardEl.querySelector(`[data-row='${row}'][data-col='${col}']`);
-        if(squareEl) squareEl.classList.add('highlight-legal');
-    });
-}
-
-function updateStatus() {
-    if (gameOver) return;
-    let status = `Turn: ${currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1)}`;
-    if (isAiGame && currentPlayer !== playerColor) {
-        status = "Stockfish is thinking...";
-    }
-    const legalMoves = generateAllLegalMoves(currentPlayer);
-    if (legalMoves.length === 0) {
-        gameOver = true;
-        if (isInCheck(currentPlayer)) {
-            status = 'Checkmate! ' + (currentPlayer === 'white' ? 'Black' : 'White') + ' wins.';
-        } else {
-            status = 'Stalemate! The game is a draw.';
-        }
-    } else if (isInCheck(currentPlayer)) {
-        status += ' (in check)';
-    }
-    playerTurnDisplay.textContent = status;
-}
-
-// --- Game Logic (Engine) ---
-function makeMove(from, to) {
-    const piece = boardState[from.row][from.col];
-    const isEnP = piece.toLowerCase() === 'p' && enPassantTargetSquare && to.row === enPassantTargetSquare.row && to.col === enPassantTargetSquare.col;
-    const isCastle = piece.toLowerCase() === 'k' && Math.abs(from.col - to.col) === 2;
-    boardState[to.row][to.col] = piece;
-    boardState[from.row][from.col] = '';
-    if (isEnP) boardState[from.row][to.col] = '';
-    if (isCastle) {
-        const dir = to.col > from.col ? 1 : -1, rCol = dir === 1 ? 7 : 0, rToCol = dir === 1 ? 5 : 3;
-        const rook = boardState[from.row][rCol];
-        boardState[from.row][rToCol] = rook;
-        boardState[from.row][rCol] = '';
-    }
-    enPassantTargetSquare = (piece.toLowerCase() === 'p' && Math.abs(from.row - to.row) === 2) ? { row: (from.row + to.row) / 2, col: from.col } : null;
-    if (piece === 'K') castlingRights.white = { kingSide: false, queenSide: false };
-    if (piece === 'k') castlingRights.black = { kingSide: false, queenSide: false };
-    if (piece === 'R' && from.row === 7 && from.col === 0) castlingRights.white.queenSide = false;
-    if (piece === 'R' && from.row === 7 && from.col === 7) castlingRights.white.kingSide = false;
-    if (piece === 'r' && from.row === 0 && from.col === 0) castlingRights.black.queenSide = false;
-    if (piece === 'r' && from.row === 0 && from.col === 7) castlingRights.black.kingSide = false;
-    if (piece.toLowerCase() === 'p' && (to.row === 0 || to.row === 7)) {
-        boardState[to.row][to.col] = getPieceColor(piece) === 'white' ? 'Q' : 'q';
-    }
-    currentPlayer = currentPlayer === 'white' ? 'black' : 'white';
-    updateBoard();
-    if (isAiGame && currentPlayer !== playerColor) {
-        setTimeout(getAiMove, 250);
-    }
-}
-function getLegalMovesForPiece(r, c) {
-    const p = boardState[r][c], moves = [];
-    if (!p) return moves;
-    for (let tr = 0; tr < 8; tr++) for (let tc = 0; tc < 8; tc++) if (isMoveLegal(p, r, c, tr, tc)) moves.push(rowColToSquare(tr, tc));
-    return moves;
-}
-function isMoveLegal(p, r1, c1, r2, c2) {
-    if (!isValidMove(p, r1, c1, r2, c2)) return false;
-    const op = boardState[r2][c2];
-    boardState[r2][c2] = p; boardState[r1][c1] = '';
-    const isCheck = isInCheck(getPieceColor(p));
-    boardState[r1][c1] = p; boardState[r2][c2] = op;
-    return !isCheck;
-}
-function isValidMove(p, r1, c1, r2, c2) {
-    const pt = p.toLowerCase(), pc = getPieceColor(p), dp = boardState[r2][c2];
-    if (dp && getPieceColor(dp) === pc) return false;
-    switch (pt) {
-        case 'p':
-            const dir = pc === 'white' ? -1 : 1;
-            if (c1 === c2 && !dp && r2 === r1 + dir) return true;
-            if (c1 === c2 && !dp && (pc === 'white' ? 6 : 1) === r1 && r2 === r1 + 2 * dir && isPathClear(r1, c1, r2, c2)) return true;
-            if (Math.abs(c1 - c2) === 1 && r2 === r1 + dir && dp) return true;
-            if (enPassantTargetSquare && r2 === enPassantTargetSquare.row && c2 === enPassantTargetSquare.col && Math.abs(c1 - c2) === 1 && r2 === r1 + dir) return true;
-            return false;
-        case 'n': const rd = Math.abs(r2 - r1), cd = Math.abs(c2 - c1); return (rd === 2 && cd === 1) || (rd === 1 && cd === 2);
-        case 'b': return Math.abs(r2 - r1) === Math.abs(c2 - c1) && isPathClear(r1, c1, r2, c2);
-        case 'r': return (r2 === r1 || c2 === c1) && isPathClear(r1, c1, r2, c2);
-        case 'q': return (Math.abs(r2 - r1) === Math.abs(c2 - c1) || r2 === r1 || c2 === c1) && isPathClear(r1, c1, r2, c2);
-        case 'k':
-            const krd = Math.abs(r2 - r1), kcd = Math.abs(c2 - c1);
-            if (krd <= 1 && kcd <= 1) return true;
-            if (krd === 0 && kcd === 2) {
-                if (isInCheck(pc)) return false;
-                const cdir = c2 > c1 ? 1 : -1, rs = cdir === 1 ? 'kingSide' : 'queenSide';
-                if (!castlingRights[pc][rs]) return false;
-                const rc = cdir === 1 ? 7 : 0;
-                if (!isPathClear(r1, c1, r1, rc)) return false;
-                if (isSquareAttacked(r1, c1 + cdir, pc === 'white' ? 'black' : 'white')) return false;
-                return true;
-            }
-            return false;
-    }
-}
-function isPathClear(r1, c1, r2, c2) {
-    const rs = Math.sign(r2 - r1), cs = Math.sign(c2 - c1);
-    let r = r1 + rs, c = c1 + cs;
-    while (r !== r2 || c !== c2) { if (boardState[r][c]) return false; r += rs; c += cs; }
-    return true;
-}
-function findKing(c) {
-    const k = c === 'white' ? 'K' : 'k';
-    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) if (boardState[i][j] === k) return { row: i, col: j };
-    return null;
-}
-function isInCheck(c) { const kp = findKing(c); return kp && isSquareAttacked(kp.row, kp.col, c === 'white' ? 'black' : 'white') }
-function isSquareAttacked(r, c, ac) {
-    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
-        const p = boardState[i][j];
-        if (p && getPieceColor(p) === ac && isValidMove(p, i, j, r, c)) return true;
-    }
-    return false;
-}
-function generateAllLegalMoves(c) {
-    const m = [];
-    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
-        const p = boardState[i][j];
-        if (p && getPieceColor(p) === c) for (let r = 0; r < 8; r++) for (let col = 0; col < 8; col++) if (isMoveLegal(p, i, j, r, col)) m.push({});
-    }
-    return m;
-}
-
-// --- UI Interaction ---
-function onSquareClick(row, col) {
-    if (gameOver || isAiThinking || (isAiGame && currentPlayer !== playerColor)) return;
-    if (selectedSquare) {
-        const from = selectedSquare;
-        const to = { row, col };
-        if (isMoveLegal(boardState[from.row][from.col], from.row, from.col, to.row, to.col)) {
-            makeMove(from, to);
-        }
-        selectedSquare = null;
-    } else {
-        const piece = boardState[row][col];
-        if (piece && getPieceColor(piece) === currentPlayer) {
-            selectedSquare = { row, col };
-        }
-    }
-    updateBoard();
-    if (selectedSquare) {
-        highlightLegalMoves(getLegalMovesForPiece(selectedSquare.row, selectedSquare.col));
-    }
-}
-
-// --- AI Integration ---
-function initStockfish() {
-    stockfish = new Worker('stockfish.wasm.js');
-    stockfish.addEventListener('message', function (e) {
-        const bestMoveRegex = /bestmove\s([a-h][1-8])([a-h][1-8])/;
-        const match = e.data.match(bestMoveRegex);
-        if (match) {
-            isAiThinking = false;
-            makeMove(squareToRowCol(match[1]), squareToRowCol(match[2]));
-        }
-    });
-    stockfish.postMessage('uci');
-    stockfish.postMessage('isready');
-}
-function getAiMove() {
-    isAiThinking = true;
-    updateStatus();
-    stockfish.postMessage(`position fen ${boardStateToFen()}`);
-    stockfish.postMessage('go depth 15');
-}
-
-// --- Main Execution ---
-function initBoard() {
-    chessboardEl.innerHTML = '';
-    for (let i = 0; i < 8; i++) {
-        for (let j = 0; j < 8; j++) {
-            const squareEl = document.createElement('div');
-            squareEl.classList.add('square');
-            const isWhite = (i + j) % 2 === 0;
-            squareEl.classList.add(isWhite ? 'white' : 'black');
-            squareEl.dataset.row = i;
-            squareEl.dataset.col = j;
-            squareEl.addEventListener('click', () => onSquareClick(i, j));
-            chessboardEl.appendChild(squareEl);
-        }
-    }
-    updateBoard();
-}
-
-function startGame() {
-    initBoard();
-    if (isAiGame) {
-        initStockfish();
-        if (playerColor !== 'white') {
-            getAiMove();
-        }
-    }
-}
-
 document.addEventListener('DOMContentLoaded', () => {
-    chessboardEl = document.getElementById('chessboard');
-    playerTurnDisplay = document.getElementById('current-player');
+    const boardElement = document.getElementById('chessboard');
+    const statusElement = document.getElementById('status'); // This ID doesn't exist, but we'll add a placeholder if needed
+    const turnElement = document.getElementById('current-player');
+    const gameModeModal = document.getElementById('game-mode-modal');
+    const pvpButton = document.getElementById('pvp-button');
+    const pvaiButton = document.getElementById('pva-button');
 
-    document.getElementById('pvp-button').addEventListener('click', () => {
-        isAiGame = false;
-        document.getElementById('game-mode-modal').classList.add('hidden');
-        startGame();
-    });
+    let game = new Chess();
+    let stockfish = null;
+    let playerColor = 'w';
+    let gameMode = null; // 'pvp' or 'pvai'
 
-    document.getElementById('pva-button').addEventListener('click', () => {
-        document.getElementById('color-selection').classList.remove('hidden');
-    });
+    // --- STOCKFISH AI ---
+    function initStockfish() {
+        if (stockfish) {
+            try {
+               stockfish.terminate();
+            } catch(e) {
+                console.warn("Failed to terminate previous stockfish instance", e);
+            }
+        }
+        try {
+            stockfish = new Worker('stockfish.wasm.js');
+            stockfish.onmessage = (event) => {
+                const message = event.data;
+                if (message.startsWith('bestmove')) {
+                    const bestMove = message.split(' ')[1];
+                    const from = bestMove.substring(0, 2);
+                    const to = bestMove.substring(2, 4);
+                    const promotion = bestMove.length > 4 ? bestMove.substring(4) : undefined;
 
-    document.getElementById('white-button').addEventListener('click', () => {
-        isAiGame = true;
-        playerColor = 'white';
-        document.getElementById('game-mode-modal').classList.add('hidden');
-        startGame();
-    });
+                    game.move({ from, to, promotion });
+                    renderBoard();
+                    updateStatus();
+                }
+            };
+            stockfish.postMessage('uci');
+            stockfish.postMessage('isready');
+            stockfish.postMessage('ucinewgame');
+        } catch (error) {
+            console.error('Failed to initialize Stockfish:', error);
+            if(statusElement) statusElement.textContent = 'Error: Could not load AI engine.';
+        }
+    }
 
-    document.getElementById('black-button').addEventListener('click', () => {
-        isAiGame = true;
-        playerColor = 'black';
-        document.getElementById('game-mode-modal').classList.add('hidden');
-        startGame();
-    });
+    function getBestMove() {
+        if (!stockfish || game.game_over()) return;
+        stockfish.postMessage(`position fen ${game.fen()}`);
+        stockfish.postMessage('go depth 15');
+    }
+
+    // --- UI & GAME FLOW ---
+
+    function renderBoard() {
+        boardElement.innerHTML = '';
+        const squares = game.board();
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 8; j++) {
+                const square = squares[i][j];
+                const squareElement = document.createElement('div');
+                squareElement.classList.add('square', (i + j) % 2 === 0 ? 'white' : 'black');
+                squareElement.dataset.row = i;
+                squareElement.dataset.col = j;
+
+                if (square) {
+                    const pieceElement = document.createElement('div');
+                    pieceElement.classList.add('piece');
+                    pieceElement.textContent = getPieceUnicode(square);
+                    pieceElement.dataset.piece = `${square.color}${square.type}`;
+                    squareElement.appendChild(pieceElement);
+                }
+                boardElement.appendChild(squareElement);
+            }
+        }
+        updateStatus();
+    }
+
+    function getPieceUnicode(piece) {
+        const unicodeMap = {
+            p: '♙', r: '♖', n: '♘', b: '♗', q: '♕', k: '♔',
+            P: '♟', R: '♜', N: '♞', B: '♝', Q: '♛', K: '♚'
+        };
+        const key = piece.color === 'w' ? piece.type : piece.type.toUpperCase();
+        return unicodeMap[key];
+    }
+
+    function updateStatus() {
+        let statusText = '';
+        if (game.in_checkmate()) {
+            statusText = `Checkmate! ${game.turn() === 'w' ? 'Black' : 'White'} wins.`;
+        } else if (game.in_draw()) {
+            statusText = 'Draw!';
+        } else if (game.in_check()) {
+            statusText = 'Check!';
+        }
+
+        // A status element doesn't exist in the HTML, so we won't set it.
+        // if (statusElement) {
+        //    statusElement.textContent = statusText;
+        // }
+
+        if (turnElement) {
+            turnElement.textContent = `${game.turn() === 'w' ? 'White' : 'Black'}'s Turn`;
+             if (game.in_check()) {
+                turnElement.textContent += ' (Check)';
+            }
+        }
+    }
+
+    let selectedSquare = null;
+    let legalMoves = [];
+
+    function handleSquareClick(event) {
+        if (game.game_over()) return;
+
+        const squareElement = event.target.closest('.square');
+        if (!squareElement) return;
+
+        const row = parseInt(squareElement.dataset.row);
+        const col = parseInt(squareElement.dataset.col);
+        const algebraic = String.fromCharCode(97 + col) + (8 - row);
+
+        // AI's turn
+        if (gameMode === 'pvai' && game.turn() !== playerColor) {
+            return;
+        }
+
+        if (selectedSquare) {
+            const move = legalMoves.find(m => m.to === algebraic);
+            if (move) {
+                let promotion = undefined;
+                if (move.flags.includes('p')) {
+                    promotion = prompt("Promote to (q, r, b, n)?", "q") || 'q';
+                     if (!['q', 'r', 'b', 'n'].includes(promotion)) {
+                        selectedSquare = null;
+                        clearHighlights();
+                        return;
+                    }
+                }
+
+                game.move({
+                    from: selectedSquare,
+                    to: algebraic,
+                    promotion: promotion
+                });
+
+                selectedSquare = null;
+                clearHighlights();
+                renderBoard();
+
+                if (gameMode === 'pvai' && !game.game_over()) {
+                    setTimeout(getBestMove, 250);
+                }
+
+            } else {
+                selectedSquare = null;
+                clearHighlights();
+                const piece = game.get(algebraic);
+                if (piece && piece.color === game.turn()) {
+                    selectPiece(algebraic, squareElement);
+                }
+            }
+        } else {
+            const piece = game.get(algebraic);
+            if (piece && piece.color === game.turn()) {
+                selectPiece(algebraic, squareElement);
+            }
+        }
+    }
+
+    function selectPiece(algebraic, squareElement) {
+        selectedSquare = algebraic;
+        legalMoves = game.moves({ square: algebraic, verbose: true });
+
+        clearHighlights();
+        squareElement.classList.add('selected');
+        legalMoves.forEach(move => {
+            const targetSquareEl = document.querySelector(`[data-row='${8 - parseInt(move.to[1])}'][data-col='${move.to.charCodeAt(0) - 97}']`);
+            if (targetSquareEl) {
+                 targetSquareEl.classList.add('highlight-legal');
+            }
+        });
+    }
+
+    function clearHighlights() {
+        document.querySelectorAll('.square.selected').forEach(s => s.classList.remove('selected'));
+        document.querySelectorAll('.highlight-legal').forEach(h => h.classList.remove('highlight-legal'));
+    }
+
+    function startGame(mode) {
+        gameMode = mode;
+        game = new Chess();
+        selectedSquare = null;
+        legalMoves = [];
+        playerColor = 'w';
+
+        if (mode === 'pvai') {
+            initStockfish();
+        }
+
+        renderBoard();
+        boardElement.addEventListener('click', handleSquareClick);
+        gameModeModal.style.display = 'none';
+    }
+
+    // --- INITIALIZATION ---
+    pvpButton.addEventListener('click', () => startGame('pvp'));
+    pvaiButton.addEventListener('click', () => startGame('pvai'));
+
+    // Show the modal on page load
+    gameModeModal.style.display = 'flex';
 });
