@@ -3,29 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Chess App</title>
-    <link rel="stylesheet" href="style.css"/>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+    <title>Chess App</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="game-mode-modal">
-        <div class="modal-content">
-            <h2>Choose Game Mode</h2>
-            <button id="pvp-button">Player vs. Player</button>
-            <button id="pva-button">Player vs. AI</button>
-            <div id="color-selection" class="hidden">
-                <h3>Choose Your Color</h3>
-                <button id="white-button">White</button>
-                <button id="black-button">Black</button>
-            </div>
-        </div>
-    </div>
     <h1>Chess App</h1>
     <div id="game-info">Turn: <span id="current-player">White</span></div>
-    <div id="board" style="width: 90vmin; height: 90vmin; max-width: 800px;"></div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.wasm.js"></script>
+    <div id="chessboard"></div>
     <script src="script.js"></script>
 </body>
 </html>
